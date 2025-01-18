@@ -9,6 +9,7 @@
 #include "WindowManager.h"
 #include "CaptureSystem.h"
 #include "FontManager.h"
+#include "ConfigManager.h"
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "user32.lib")
@@ -29,6 +30,7 @@ struct AppState {
     RECT selectedRegion = { 0, 0, 0, 0 };
 
     std::unique_ptr<FontManager> fontManager;
+    std::unique_ptr<ConfigManager> configManager;
 
     // Text display members
     POINT textPosition = { 350, 350 };
@@ -177,6 +179,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONUP: {
         if (g_state->isDraggingText) {
             g_state->isDraggingText = false;
+            g_state->configManager->SaveCurrentState(
+                g_state->hasSelectedRegion,
+                g_state->selectedRegion,
+                g_state->textPosition
+            );
             return 0;
         }
 
@@ -211,8 +218,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // Start capture with new region
                 if (!g_state->captureSystem->StartCapture(rect)) {
                     ShowError(L"Failed to start capture!");
-                    g_state->captureSystem.reset();  // Clean up failed capture system
-                    g_state->hasSelectedRegion = false;  // Reset region selection state
+                    g_state->captureSystem.reset();
+                    g_state->hasSelectedRegion = false;
+                }
+                else {
+                    g_state->configManager->SaveCurrentState(
+                        g_state->hasSelectedRegion,
+                        g_state->selectedRegion,
+                        g_state->textPosition
+                    );
                 }
 
                 InvalidateRect(hwnd, nullptr, TRUE);
@@ -331,6 +345,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_DESTROY: {
+        g_state->configManager->SaveCurrentState(
+            g_state->hasSelectedRegion,
+            g_state->selectedRegion,
+            g_state->textPosition
+        );
         KillTimer(hwnd, AppState::WINDOW_TRACK_TIMER);
         if (g_state->captureSystem) {
             g_state->captureSystem->StopCapture();
@@ -389,10 +408,19 @@ HWND CreateOverlayWindow(HINSTANCE hInstance, const RECT& bounds) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    
     if (!RegisterOverlayClass(hInstance)) {
         return 1;
     }
+
+    // Initialize ConfigManager before other systems
+    g_state->configManager = std::make_unique<ConfigManager>();
+    auto config = g_state->configManager->LoadConfig();
+
+    // Always start in click-through mode
+    g_state->isClickthrough = true;
+
+    // Apply loaded configuration
+    g_state->textPosition = config.textPosition;
 
     // Initialize FontManager and load Crimson Text font
     g_state->fontManager = std::make_unique<FontManager>();
@@ -414,6 +442,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     HWND hwnd = CreateOverlayWindow(hInstance, gameWindow->bounds);
     if (!hwnd) {
         return 1;
+    }
+
+    // Initialize capture system if we have a saved region
+    if (config.hasRegion) {
+        g_state->selectedRegion = config.xpBarRegion;
+        g_state->hasSelectedRegion = true;
+
+        g_state->captureSystem = std::make_unique<CaptureSystem>();
+        if (g_state->captureSystem->Initialize(hwnd)) {
+            if (!g_state->captureSystem->StartCapture(config.xpBarRegion)) {
+                g_state->captureSystem.reset();
+                g_state->hasSelectedRegion = false;
+            }
+        }
     }
 
     // Set timer to track window position
