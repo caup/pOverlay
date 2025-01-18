@@ -144,6 +144,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CaptureSystem.h" />
+    <ClInclude Include="ConfigManager.h" />
     <ClInclude Include="FontManager.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="WindowManager.h" />
